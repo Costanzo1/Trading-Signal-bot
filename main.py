@@ -31,10 +31,10 @@ def is_market_open():
         return False
     return True
 
-@app.route('/webhook', methods= )
+@app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        data = request.json
+        data = request.get_json()
         symbol = data.get('symbol', 'UNKNOWN')
         price = data.get('price', 'N/A')
         
@@ -53,32 +53,34 @@ def webhook():
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are an expert swing trader. Analyze the current price and give a clear trading signal. Respond ONLY with valid JSON in this exact format: {\"verdict\":\"BUY\",\"probability\":85,\"entry\":2650.5,\"sl\":2635,\"tp1\":2670,\"tp2\":2685,\"reason\":\"strong support level\"} or {\"verdict\":\"NO\"} if no good setup."
+                        "content": "You are an expert swing trader. Respond ONLY with valid JSON: {\"verdict\": \"BUY\" or \"SELL\" or \"NO\", \"probability\": number, \"entry\": number, \"sl\": number, \"tp1\": number, \"tp2\": number or null, \"reason\": \"short explanation\"}. Only strong setups >=70% probability."
                     },
                     {
                         "role": "user",
-                        "content": f"Symbol: {symbol}\nCurrent Price: {price}\nGive me your best trading analysis."
+                        "content": f"Symbol: {symbol}\nCurrent Price: {price}"
                     }
                 ],
-                "temperature": 0.3
+                "temperature": 0.3,
+                "max_tokens": 600
             }
         )
         
         result = grok_resp.json()
-        content = result [0]  signal = json.loads(content.strip())
+        content = result['choices'][0]['message']['content']
+        signal = json.loads(content.strip())
         
-        if signal.get('verdict') == "NO":
-            return "No signal", 200
+        if signal.get('verdict') == "NO" or signal.get('probability', 0) < 70:
+            return "No strong signal", 200
 
-        message = f"""🚨 **NEW SIGNAL** - {signal.get('verdict')}
+        message = f"""🚨 **STRONG SIGNAL** — {signal.get('verdict')}
 
 **Asset:** {symbol}
-**Price:** {price}
+**Current Price:** {price}
 
 **Entry:** {signal.get('entry')}
 **Stop Loss:** {signal.get('sl')}
 **TP1:** {signal.get('tp1')}
-**TP2:** {signal.get('tp2')}
+**TP2:** {signal.get('tp2') or '—'}
 
 **Probability:** {signal.get('probability')}%
 **Reason:** {signal.get('reason')}"""
