@@ -53,7 +53,7 @@ def webhook():
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are an expert swing trader. Respond ONLY with valid JSON: {\"verdict\": \"BUY\" or \"SELL\" or \"NO\", \"probability\": number, \"entry\": number, \"sl\": number, \"tp1\": number, \"tp2\": number or null, \"reason\": \"short explanation\"}. Only strong setups >=70% probability."
+                        "content": "You are a professional and very selective swing trader specialized in daily and 4H timeframes.\n\nRules:\n- Only give signals when you see a high-probability setup with minimum 78% confidence\n- If the setup is not clear and strong, respond ONLY with: {\"verdict\":\"NO\"}\n- Base your analysis purely on price action, market structure, key support/resistance levels and risk-reward ratio\n- Never force a trade. No setup = NO signal\n- Keep the reason short and professional (maximum 12 words)\n\nRespond ONLY with valid JSON in this exact format and nothing else:\n{\"verdict\":\"BUY\" or \"SELL\" or \"NO\",\"probability\":number,\"entry\":number,\"sl\":number,\"tp1\":number,\"tp2\":number or null,\"reason\":\"short explanation\"}"
                     },
                     {
                         "role": "user",
@@ -69,7 +69,7 @@ def webhook():
         content = result['choices'][0]['message']['content']
         signal = json.loads(content.strip())
         
-        if signal.get('verdict') == "NO" or signal.get('probability', 0) < 70:
+        if signal.get('verdict') == "NO" or signal.get('probability', 0) < 78:
             return "No strong signal", 200
 
         message = f"""🚨 **STRONG SIGNAL** — {signal.get('verdict')}
