@@ -17,17 +17,11 @@ def is_market_open():
     month = now.month
     day = now.day
 
-    if weekday >= 5:  # Weekend
-        return False
-    if weekday == 4 and hour >= 21:  # Friday after 21:00 UTC
+    if weekday >= 5 or (weekday == 4 and hour >= 21):
         return False
     
-    # US Holidays
-    if (month == 1 and day == 1) or (month == 1 and day == 20) or \
-       (month == 2 and day == 17) or (month == 5 and day == 26) or \
-       (month == 6 and day == 19) or (month == 7 and day == 4) or \
-       (month == 9 and day == 1) or (month == 11 and day == 27) or \
-       (month == 12 and day == 25):
+    holidays = [(1,1),(1,20),(2,17),(5,26),(6,19),(7,4),(9,1),(11,27),(12,25)]
+    if (month, day) in holidays:
         return False
     return True
 
@@ -37,23 +31,19 @@ def webhook():
         data = request.get_json()
         symbol = data.get('symbol', 'UNKNOWN')
         price = data.get('price', 'N/A')
-        
+
         if not is_market_open():
-            print(f"Market closed - Ignored signal for {symbol}")
             return "Market closed", 200
 
         grok_resp = requests.post(
             "https://api.x.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROK_API_KEY}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"},
             json={
                 "model": "grok-3",
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a professional and very selective swing trader specialized in daily and 4H timeframes.\n\nRules:\n- Only give signals when you see a high-probability setup with minimum 78% confidence\n- If the setup is not clear and strong, respond ONLY with: {\"verdict\":\"NO\"}\n- Base your analysis purely on price action, market structure, key support/resistance levels and risk-reward ratio\n- Never force a trade. No setup = NO signal\n- Keep the reason short and professional (maximum 12 words)\n\nRespond ONLY with valid JSON in this exact format and nothing else:\n{\"verdict\":\"BUY\" or \"SELL\" or \"NO\",\"probability\":number,\"entry\":number,\"sl\":number,\"tp1\":number,\"tp2\":number or null,\"reason\":\"short explanation\"}"
+                        "content": "You are a professional and very selective swing trader specialized in daily and 4H timeframes.\nOnly give signals with minimum 78% confidence.\nIf no strong setup, respond ONLY with: {\"verdict\":\"NO\"}\nBase analysis on price action and market structure.\nRespond ONLY with valid JSON:\n{\"verdict\":\"BUY\" or \"SELL\" or \"NO\",\"probability\":number,\"entry\":number,\"sl\":number,\"tp1\":number,\"tp2\":number or null,\"reason\":\"short explanation\"}"
                     },
                     {
                         "role": "user",
@@ -64,33 +54,32 @@ def webhook():
                 "max_tokens": 600
             }
         )
-        
+
         result = grok_resp.json()
         content = result['choices'][0]['message']['content']
         signal = json.loads(content.strip())
-        
+
         if signal.get('verdict') == "NO" or signal.get('probability', 0) < 78:
             return "No strong signal", 200
 
         message = f"""🚨 **STRONG SIGNAL** — {signal.get('verdict')}
 
 **Asset:** {symbol}
-**Current Price:** {price}
+**Price:** {price}
 
 **Entry:** {signal.get('entry')}
-**Stop Loss:** {signal.get('sl')}
+**SL:** {signal.get('sl')}
 **TP1:** {signal.get('tp1')}
 **TP2:** {signal.get('tp2') or '—'}
 
-**Probability:** {signal.get('probability')}%
+**Prob:** {signal.get('probability')}%
 **Reason:** {signal.get('reason')}"""
 
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
                       json={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"})
-        
-        print(f"Signal sent for {symbol}")
+
         return "OK", 200
-        
+
     except Exception as e:
         print("Error:", str(e))
         return "Error", 500
