@@ -2,7 +2,7 @@ from flask import Flask, request
 import requests
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 app = Flask(__name__)
 
@@ -10,20 +10,20 @@ GROK_API_KEY = os.getenv("GROK_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+
 def is_market_open():
-    utc_now = datetime.now(timezone.utc)
-    weekday = utc_now.weekday()
-    hour = utc_now.hour
-    month = utc_now.month
-    day = utc_now.day
-    
+    now = datetime.now(timezone.utc)
+    weekday = now.weekday()
+    hour = now.hour
+    month = now.month
+    day = now.day
     if weekday >= 5 or (weekday == 4 and hour >= 21):
         return False
-    
-    holidays = [(1,1),(1,20),(2,17),(5,26),(6,19),(7,4),(9,1),(11,27),(12,25)]
+    holidays = [(1, 1), (1, 20), (2, 17), (5, 26), (6, 19), (7, 4), (9, 1), (11, 27), (12, 25)]
     if (month, day) in holidays:
         return False
     return True
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -31,19 +31,25 @@ def webhook():
         data = request.get_json()
         symbol = data.get('symbol', 'UNKNOWN')
         price = data.get('price', 'N/A')
-        
+        print(f"ALERT RECEIVED: {symbol} @ {price}", flush=True)
+
         if not is_market_open():
+            print("Market closed, skipping", flush=True)
             return "Market closed", 200
-        
+
+        print("Calling Grok API...", flush=True)
         grok_resp = requests.post(
             "https://api.x.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {GROK_API_KEY}",
+                "Content-Type": "application/json"
+            },
             json={
-                "model": "grok-3",
+                "model": "grok-beta",
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a professional and very selective swing trader specialized in daily and 4H timeframes.\nOnly give signals with minimum 78% confidence.\nIf no strong setup, respond ONLY with: {\"verdict\":\"NO\"}\nBase analysis on price action and market structure.\nRespond ONLY with valid JSON:\n{\"verdict\":\"BUY\" or \"SELL\" or \"NO\",\"probability\":number,\"entry\":number,\"sl\":number,\"tp1\":number,\"tp2\":number or null,\"reason\":\"short explanation\"}"
+                        "content": "You are a professional selective swing trader. Only give high quality setups with minimum 78% confidence. If no strong setup respond ONLY with {\"verdict\":\"NO\"}. Keep reason very short. Respond ONLY with this exact JSON format: {\"verdict\":\"BUY\" or \"SELL\" or \"NO\",\"probability\":number,\"entry\":number,\"sl\":number,\"tp1\":number,\"tp2\":null,\"reason\":\"short explanation\"}"
                     },
                     {
                         "role": "user",
@@ -51,38 +57,50 @@ def webhook():
                     }
                 ],
                 "temperature": 0.3,
-                "max_tokens": 600
-            }
+                "max_tokens": 350
+            },
+            timeout=12
         )
-        
+        print(f"Grok status: {grok_resp.status_code}", flush=True)
+
         result = grok_resp.json()
         content = result['choices'][0]['message']['content']
+        print(f"Grok content: {content}", flush=True)
+
         signal = json.loads(content.strip())
-        
+
         if signal.get('verdict') == "NO" or signal.get('probability', 0) < 78:
+            print(f"Signal rejected. Verdict: {signal.get('verdict')}, Prob: {signal.get('probability')}", flush=True)
             return "No strong signal", 200
-        
-        message = f"""🚨 **STRONG SIGNAL** — {signal.get('verdict')}
-**Asset:** {symbol}
-**Price:** {price}
-**Entry:** {signal.get('entry')}
-**SL:** {signal.get('sl')}
-**TP1:** {signal.get('tp1')}
-**TP2:** {signal.get('tp2') or '—'}
-**Prob:** {signal.get('probability')}%
-**Reason:** {signal.get('reason')}"""
-        
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                      json={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"})
-        
+
+        print("Strong signal! Sending to Telegram...", flush=True)
+        message = f"""🚨 STRONG SIGNAL {signal.get('verdict')} {symbol}
+Price: {price}
+Entry: {signal.get('entry')}
+SL: {signal.get('sl')}
+TP1: {signal.get('tp1')}
+TP2: {signal.get('tp2') or '*'}
+Probability: {signal.get('probability')}%
+Reason: {signal.get('reason')}"""
+
+        tg_resp = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": message},
+            timeout=10
+        )
+        print(f"Telegram status: {tg_resp.status_code}", flush=True)
+        print(f"Telegram response: {tg_resp.text}", flush=True)
+
         return "OK", 200
     except Exception as e:
-        print("Error:", str(e))
+        print(f"ERROR: {str(e)}", flush=True)
         return "Error", 500
+
 
 @app.route('/')
 def home():
-    return "Trading Signal Bot is running! ✅"
+    return "Trading Signal Bot is running!"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
