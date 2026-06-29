@@ -2,7 +2,7 @@ from flask import Flask, request
 import requests
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 
@@ -11,12 +11,12 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 def is_market_open():
-    now = datetime.utcnow()
-    weekday = now.weekday()
-    hour = now.hour
-    month = now.month
-    day = now.day
-
+    utc_now = datetime.now(timezone.utc)
+    weekday = utc_now.weekday()
+    hour = utc_now.hour
+    month = utc_now.month
+    day = utc_now.day
+    
     if weekday >= 5 or (weekday == 4 and hour >= 21):
         return False
     
@@ -31,10 +31,10 @@ def webhook():
         data = request.get_json()
         symbol = data.get('symbol', 'UNKNOWN')
         price = data.get('price', 'N/A')
-
+        
         if not is_market_open():
             return "Market closed", 200
-
+        
         grok_resp = requests.post(
             "https://api.x.ai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROK_API_KEY}", "Content-Type": "application/json"},
@@ -54,32 +54,28 @@ def webhook():
                 "max_tokens": 600
             }
         )
-
+        
         result = grok_resp.json()
         content = result['choices'][0]['message']['content']
         signal = json.loads(content.strip())
-
+        
         if signal.get('verdict') == "NO" or signal.get('probability', 0) < 78:
             return "No strong signal", 200
-
+        
         message = f"""🚨 **STRONG SIGNAL** — {signal.get('verdict')}
-
 **Asset:** {symbol}
 **Price:** {price}
-
 **Entry:** {signal.get('entry')}
 **SL:** {signal.get('sl')}
 **TP1:** {signal.get('tp1')}
 **TP2:** {signal.get('tp2') or '—'}
-
 **Prob:** {signal.get('probability')}%
 **Reason:** {signal.get('reason')}"""
-
+        
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
                       json={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"})
-
+        
         return "OK", 200
-
     except Exception as e:
         print("Error:", str(e))
         return "Error", 500
@@ -89,4 +85,5 @@ def home():
     return "Trading Signal Bot is running! ✅"
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=8080)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
